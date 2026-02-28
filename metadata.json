@@ -1,0 +1,7 @@
+{
+  "name": "Venom.b55 (hack) - Bot de Sinais Pro",
+  "description": "Plataforma profissional de análise e sinais para casas de apostas em Moçambique com agenda de horários pagadores.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
