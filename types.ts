@@ -41,6 +41,7 @@ export interface SupportMessage {
   id: string;
   text: string;
   timestamp: number;
+  isUser?: boolean;
 }
 
 export interface AgendaItem {
@@ -65,14 +66,16 @@ export interface BettingHouse {
 
 export enum AppScreen {
   HOUSE_SELECTION = 'HOUSE_SELECTION',
-  BOT_DASHBOARD = 'BOT_DASHBOARD',
+  HACK_GENERATOR = 'HACK_GENERATOR',
+  HACKER_GERAL = 'HACKER_GERAL',
   MARKET_ANALYSIS = 'MARKET_ANALYSIS',
   AGENDA = 'AGENDA',
   SIGNAL_ROOM = 'SIGNAL_ROOM',
   VIRTUAL_BOT = 'VIRTUAL_BOT',
   SUPPORT = 'SUPPORT',
   SETTINGS = 'SETTINGS',
-  EFRON_ASSISTANT = 'EFRON_ASSISTANT'
+  LOGIN = 'LOGIN',
+  ADMIN_PANEL = 'ADMIN_PANEL'
 }
 
 export interface PlatformNotification {

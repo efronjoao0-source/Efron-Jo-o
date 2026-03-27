@@ -4,6 +4,7 @@ import { Signal, CandleType, SignalStatus } from '../types.ts';
 
 interface SignalHistoryProps {
   history: Signal[];
+  mentorAnalysis?: string;
   onRemove: (id: string) => void;
   onClearAll: () => void;
   onCopy: (message: string) => void;
@@ -82,13 +83,30 @@ const CountdownProgress = ({ targetTimestamp, currentTime }: { targetTimestamp: 
   );
 };
 
-export default function SignalHistory({ history, onRemove, onClearAll, onCopy, currentTime }: SignalHistoryProps) {
+export default function SignalHistory({ history, mentorAnalysis, onRemove, onClearAll, onCopy, currentTime }: SignalHistoryProps) {
   const formatText = (sig: Signal) => {
     return `💎 *VENOM HACK - SINAL CONFIRMADO* 💎\n\n🏛️ *CASA:* ${sig.house.toUpperCase()}\n⏰ *HORARIO:* ${sig.time}\n🎯 *ALVO:* ${sig.multiplier}\n🔥 *ASSERTIVIDADE:* ${sig.probability.toFixed(1)}%\n\n✅ *ENTRADA AUTORIZADA*\n🤖 *venom.b55 (hack) Pro*`;
   };
 
   return (
     <div className="space-y-6">
+      {mentorAnalysis && history.length > 0 && (
+        <div className="mx-4 p-4 bg-black/60 border border-accent/20 rounded-2xl font-mono text-[9px] space-y-2 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2 text-accent">
+            <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+            <span className="font-black uppercase tracking-widest">Mentor Analysis</span>
+          </div>
+          <p className="text-primary/80 leading-relaxed italic">
+            <span className="text-accent mr-1">{'>'}</span>
+            {mentorAnalysis}
+          </p>
+          <div className="flex justify-between text-[6px] text-secondary/40 uppercase">
+            <span>Protocol: VENOM_V5.5</span>
+            <span>Status: INJECTED</span>
+          </div>
+        </div>
+      )}
+
       {history.length > 0 && (
         <div className="flex justify-between items-center px-4">
           <span className="text-[9px] font-mono text-secondary uppercase tracking-widest">Logs em Cache: {history.length}</span>

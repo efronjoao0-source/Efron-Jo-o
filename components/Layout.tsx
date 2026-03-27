@@ -21,10 +21,17 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
       )
     },
     { 
-      screen: AppScreen.BOT_DASHBOARD, 
-      label: 'Hack',
+      screen: AppScreen.HACK_GENERATOR, 
+      label: 'Hackear',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      )
+    },
+    { 
+      screen: AppScreen.HACKER_GERAL, 
+      label: 'Hacker Geral',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
       )
     },
     { 
@@ -47,13 +54,6 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z"/></svg>
       )
-    },
-    { 
-      screen: AppScreen.EFRON_ASSISTANT, 
-      label: 'Efron.IA',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-      )
     }
   ];
 
@@ -61,15 +61,17 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
     <div className="min-h-screen flex flex-col max-w-[430px] mx-auto bg-transparent text-primary relative shadow-[0_0_100px_rgba(0,0,0,0.4)] border-x border-white/[0.02]">
       <header className="px-6 py-5 border-b border-white/[0.03] bg-[#05070a]/80 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <div 
-            onClick={onLogoClick}
-            style={{ backgroundColor: themeConfig.accentColor }}
-            className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-black text-[10px] shadow-lg cursor-pointer active:scale-90 transition-all border border-white/20"
-          >
-            V55
-          </div>
+          {activeScreen !== AppScreen.LOGIN && (
+            <div 
+              onClick={onLogoClick}
+              style={{ backgroundColor: themeConfig.accentColor }}
+              className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-black text-[10px] shadow-lg cursor-pointer active:scale-90 transition-all border border-white/20"
+            >
+              V55
+            </div>
+          )}
           <div>
-            <h1 className="font-black text-xs leading-tight tracking-tighter text-primary">Venom <span className="text-accent">Pro</span></h1>
+            <h1 className="font-black text-xs leading-tight tracking-tighter text-primary">Venom <span className="text-accent">Elite</span></h1>
             <p className="text-[8px] font-bold text-secondary uppercase tracking-[0.2em]">Hacker System</p>
           </div>
         </div>
@@ -86,28 +88,30 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
         {children}
       </main>
 
-      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[94%] max-w-[410px] nav-dock rounded-[2rem] p-2 flex justify-between items-center z-50">
-        {navItems.map((item) => {
-          const isActive = activeScreen === item.screen;
-          return (
-            <button 
-              key={item.screen}
-              onClick={() => setScreen(item.screen)}
-              className={`flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-2xl transition-all duration-300 active:scale-90 flex-1 ${isActive ? 'text-accent' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              <div className={`transition-transform duration-300 ${isActive ? 'scale-110' : 'scale-100'}`}>
-                {item.icon}
-              </div>
-              <span className={`text-[8px] font-bold uppercase tracking-tighter transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-60'}`}>
-                {item.label}
-              </span>
-              {isActive && (
-                <div className="absolute -top-1 w-1 h-1 rounded-full bg-accent shadow-[0_0_8px_var(--accent-color)]"></div>
-              )}
-            </button>
-          );
-        })}
-      </nav>
+      {(activeScreen !== AppScreen.LOGIN && activeScreen !== AppScreen.ADMIN_PANEL) && (
+        <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[94%] max-w-[410px] nav-dock rounded-[2rem] p-2 flex justify-between items-center z-50">
+          {navItems.map((item) => {
+            const isActive = activeScreen === item.screen;
+            return (
+              <button 
+                key={item.screen}
+                onClick={() => setScreen(item.screen)}
+                className={`flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-2xl transition-all duration-300 active:scale-90 flex-1 ${isActive ? 'text-accent' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <div className={`transition-transform duration-300 ${isActive ? 'scale-110' : 'scale-100'}`}>
+                  {item.icon}
+                </div>
+                <span className={`text-[8px] font-bold uppercase tracking-tighter transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-60'}`}>
+                  {item.label}
+                </span>
+                {isActive && (
+                  <div className="absolute -top-1 w-1 h-1 rounded-full bg-accent shadow-[0_0_8px_var(--accent-color)]"></div>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </div>
   );
 }
