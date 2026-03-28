@@ -329,10 +329,27 @@ const App: React.FC = () => {
   const handleGoogleSignIn = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (error) {
+      // Force account selection to avoid auto-login loops if there's an error
+      provider.setCustomParameters({ prompt: 'select_account' });
+      
+      const result = await signInWithPopup(auth, provider);
+      if (result.user) {
+        triggerToast("LOGIN REALIZADO COM SUCESSO!");
+      }
+    } catch (error: any) {
       console.error("Error signing in with Google:", error);
-      triggerToast("ERRO AO ENTRAR COM GOOGLE");
+      
+      let errorMsg = "ERRO AO ENTRAR COM GOOGLE";
+      if (error.code === 'auth/unauthorized-domain') {
+        errorMsg = "DOMÍNIO NÃO AUTORIZADO NO FIREBASE!";
+        alert("ERRO DE CONFIGURAÇÃO: O domínio " + window.location.hostname + " não está autorizado no Console do Firebase (Authentication > Settings > Authorized Domains).");
+      } else if (error.code === 'auth/popup-blocked') {
+        errorMsg = "POPUP BLOQUEADO PELO NAVEGADOR!";
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        errorMsg = "LOGIN CANCELADO PELO USUÁRIO";
+      }
+      
+      triggerToast(errorMsg);
     }
   };
 
@@ -543,6 +560,22 @@ const App: React.FC = () => {
     { name: '5 DIAS', price: '550 MZN' },
     { name: 'REVENDEDOR', price: '700 MZN' },
   ];
+
+  const shareSystemLink = () => {
+    const shareUrl = window.location.origin;
+    const text = `💎 *VENOM ELITE - BOT DE SINAIS PRO* 💎\n\n🚀 Acesse o sistema de sinais mais assertivo de Moçambique!\n\n🔗 *LINK:* ${shareUrl}\n\n✅ *Extração de Lucro Garantida*`;
+    
+    if (navigator.share) {
+      navigator.share({
+        title: 'Venom Elite - Bot de Sinais',
+        text: text,
+        url: shareUrl
+      }).catch(() => triggerToast("ERRO AO COMPARTILHAR"));
+    } else {
+      navigator.clipboard.writeText(text);
+      triggerToast("LINK DE CONVITE COPIADO!");
+    }
+  };
 
   const handleLogin = () => {
     if (!isBotOpen) {
@@ -1392,6 +1425,21 @@ const App: React.FC = () => {
             <h2 className="text-2xl font-black text-primary tracking-tight">Tools <span className="text-accent">Selection</span></h2>
             <p className="text-[8px] text-secondary uppercase tracking-[0.3em] font-black">Moçambique Intelligence Hub</p>
           </div>
+
+          <div className="glass-card p-4 rounded-3xl border border-accent/20 bg-accent/5 flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-[9px] font-black text-accent uppercase tracking-widest">Convidar Parceiros</p>
+              <p className="text-[7px] text-secondary font-bold uppercase">Compartilhe o acesso seguro</p>
+            </div>
+            <button 
+              onClick={shareSystemLink}
+              className="px-4 py-2 bg-accent text-black rounded-xl font-black text-[8px] uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center gap-2"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+              Gerar Link
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             {BETTING_HOUSES.map(h => (
               <button key={h.id} onClick={() => { setSelectedHouse(h); setActiveScreen(AppScreen.HACK_GENERATOR); }}
