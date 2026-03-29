@@ -7,7 +7,7 @@ import SignalHistory from './components/SignalHistory.tsx';
 import { GoogleGenAI } from "@google/genai";
 import { db, auth, OperationType, handleFirestoreError } from './src/firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, User } from 'firebase/auth';
-import { onSnapshot, doc, collection, setDoc, updateDoc, deleteDoc, getDoc, getDocFromServer } from 'firebase/firestore';
+import { onSnapshot, doc, collection, setDoc, updateDoc, deleteDoc, getDoc, getDocFromServer, getDocs, writeBatch, addDoc } from 'firebase/firestore';
 
 const PREDEFINED_THEMES: ThemeConfig[] = [
   { id: 'venom', name: 'Venom Elite', mode: 'dark', accentColor: '#00FF9D', brightness: 100, contrast: 100 },
@@ -83,7 +83,24 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
             Reiniciar Sistema
           </button>
           <pre className="mt-8 p-4 bg-black/50 rounded-xl text-[8px] text-rose-400 text-left overflow-auto max-w-full font-mono">
-            {typeof this.state.error === 'object' ? JSON.stringify(this.state.error, null, 2) : String(this.state.error)}
+            {(() => {
+              try {
+                if (typeof this.state.error !== 'object' || this.state.error === null) {
+                  return String(this.state.error);
+                }
+                
+                const seen = new WeakSet();
+                return JSON.stringify(this.state.error, (key, value) => {
+                  if (typeof value === "object" && value !== null) {
+                    if (seen.has(value)) return "[Circular]";
+                    seen.add(value);
+                  }
+                  return value;
+                }, 2);
+              } catch (e) {
+                return String(this.state.error?.message || this.state.error || 'Erro desconhecido');
+              }
+            })()}
           </pre>
         </div>
       );
@@ -93,25 +110,8 @@ class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasErr
 }
 
 const App: React.FC = () => {
-  const [activeScreen, setActiveScreen] = useState<AppScreen>(AppScreen.LOGIN);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUserKey, setCurrentUserKey] = useState('');
-  const [loginInput, setLoginInput] = useState('');
-  
-  // Firebase Auth & Sync
-  const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [activeScreen, setActiveScreen] = useState<AppScreen>(AppScreen.HOUSE_SELECTION);
   const [aiInstance, setAiInstance] = useState<any>(null);
-
-  const [isBlocked, setIsBlocked] = useState(false);
-  const [failedAdminAttempts, setFailedAdminAttempts] = useState(0);
-
-  const [blockedUsers, setBlockedUsers] = useState<{
-    email: string,
-    reason: string,
-    blockedAt: number,
-    uid?: string
-  }[]>([]);
 
   useEffect(() => {
     if (process.env.GEMINI_API_KEY) {
@@ -123,36 +123,12 @@ const App: React.FC = () => {
   // Admin & Bot Status (Synced with Firestore)
   const [isBotOpen, setIsBotOpen] = useState(true);
   const [botClosedMessage, setBotClosedMessage] = useState('BOT EM MANUTENÇÃO. VOLTAMOS EM BREVE!');
-  const [adminPassword, setAdminPassword] = useState('venom.b5');
-  const [userKeys, setUserKeys] = useState<{
-    key: string, 
-    isBanned: boolean, 
-    expiresAt?: number,
-    blockedScreens?: string[],
-    lastAction?: string,
-    lastActionAt?: number,
-    currentScreen?: string,
-    adminMessage?: string
-  }[]>([]);
-  const [adminLoginInput, setAdminLoginInput] = useState('');
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-  const [newKeyInput, setNewKeyInput] = useState('');
-  const [newKeyDays, setNewKeyDays] = useState('');
-  const [newKeyHours, setNewKeyHours] = useState('');
-  const [newKeyMinutes, setNewKeyMinutes] = useState('');
-  const [newAdminPassInput, setNewAdminPassInput] = useState('');
-  const [adminMessageInput, setAdminMessageInput] = useState<{ [key: string]: string }>({});
-  const [newBotMessageInput, setNewBotMessageInput] = useState('');
+  const [adminWhatsApp, setAdminWhatsApp] = useState('258845550673');
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
-  const [isBanConfirmOpen, setIsBanConfirmOpen] = useState(false);
-  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  const [keyToToggle, setKeyToToggle] = useState<string | null>(null);
-  const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [generatedInviteLink, setGeneratedInviteLink] = useState('');
   const [selectedPlan, setSelectedPlan] = useState<{name: string, price: string} | null>(null);
-  const [isSelectingAdmin, setIsSelectingAdmin] = useState(false);
-  const [paymentPhone, setPaymentPhone] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'mpesa' | 'emola'>('mpesa');
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
 
   const [selectedHouse, setSelectedHouse] = useState<BettingHouse | null>(null);
@@ -192,111 +168,26 @@ const App: React.FC = () => {
   const [hasApiKey, setHasApiKey] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      setIsAuthReady(true);
-      
-      if (u) {
-        // Check if user is blocked (by email or UID)
-        let isUserBlocked = false;
-        const isAdminEmail = u.email === 'efronjoao9@gmail.com';
-        
-        if (!isAdminEmail) {
-          // Check by UID
-          const blockedUidRef = doc(db, 'blocked_users', u.uid);
-          const blockedUidSnap = await getDoc(blockedUidRef).catch(() => null);
-          if (blockedUidSnap?.exists()) {
-            isUserBlocked = true;
-          }
-          
-          // Check by Email if available
-          if (!isUserBlocked && u.email) {
-            const blockedEmailRef = doc(db, 'blocked_users', u.email);
-            const blockedEmailSnap = await getDoc(blockedEmailRef).catch(() => null);
-            if (blockedEmailSnap?.exists()) {
-              isUserBlocked = true;
-            }
-          }
-        }
-
-        if (isUserBlocked) {
-          setIsBlocked(true);
-          return;
-        }
-        
-        // If it's the admin, ensure isBlocked is false even if previously set
-        if (isAdminEmail) {
-          setIsBlocked(false);
-        }
-
-        // Ensure user document exists
-        const userRef = doc(db, 'users', u.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          await setDoc(userRef, {
-            uid: u.uid,
-            email: u.email,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
-            role: u.email === 'efronjoao9@gmail.com' ? 'admin' : 'user',
-            lastLogin: Date.now()
-          }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`));
-        } else {
-          await updateDoc(userRef, {
-            lastLogin: Date.now()
-          }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${u.uid}`));
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Sync Global Settings
-  useEffect(() => {
-    if (!isAuthReady || !user) return;
-
     const unsub = onSnapshot(doc(db, 'appSettings', 'global'), (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
         setIsBotOpen(data.isBotOpen);
         setBotClosedMessage(data.botClosedMessage);
-        setAdminPassword(data.adminPassword);
+        setAdminWhatsApp(data.adminWhatsApp || '258845550673');
       } else {
         // Initialize global settings if they don't exist
         setDoc(doc(db, 'appSettings', 'global'), {
           isBotOpen: true,
           botClosedMessage: 'BOT EM MANUTENÇÃO. VOLTAMOS EM BREVE!',
-          adminPassword: 'venom.b5'
+          adminWhatsApp: '258845550673'
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'appSettings/global'));
       }
     }, (err) => handleFirestoreError(err, OperationType.GET, 'appSettings/global'));
 
-    return () => unsub();
-  }, [isAuthReady, user]);
-
-  // Sync User Keys
-  useEffect(() => {
-    if (!isAuthReady || !user) return;
-
-    const unsub = onSnapshot(collection(db, 'userKeys'), (snapshot) => {
-      const keys = snapshot.docs.map(doc => doc.data() as {key: string, isBanned: boolean, expiresAt?: number});
-      setUserKeys(keys);
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'userKeys'));
-
-    return () => unsub();
-  }, [isAuthReady, user]);
-
-  // Sync Blocked Users
-  useEffect(() => {
-    if (!isAuthReady || !user || !isAdminLoggedIn) return;
-
-    const unsub = onSnapshot(collection(db, 'blocked_users'), (snapshot) => {
-      const blocked = snapshot.docs.map(doc => doc.data() as any);
-      setBlockedUsers(blocked);
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'blocked_users'));
-
-    return () => unsub();
-  }, [isAuthReady, user, isAdminLoggedIn]);
+    return () => {
+      unsub();
+    };
+  }, []);
 
   // Test connection on boot
   useEffect(() => {
@@ -325,33 +216,6 @@ const App: React.FC = () => {
     };
     testConnection();
   }, []);
-
-  const handleGoogleSignIn = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      // Force account selection to avoid auto-login loops if there's an error
-      provider.setCustomParameters({ prompt: 'select_account' });
-      
-      const result = await signInWithPopup(auth, provider);
-      if (result.user) {
-        triggerToast("LOGIN REALIZADO COM SUCESSO!");
-      }
-    } catch (error: any) {
-      console.error("Error signing in with Google:", error);
-      
-      let errorMsg = "ERRO AO ENTRAR COM GOOGLE";
-      if (error.code === 'auth/unauthorized-domain') {
-        errorMsg = "DOMÍNIO NÃO AUTORIZADO NO FIREBASE!";
-        alert("ERRO DE CONFIGURAÇÃO: O domínio " + window.location.hostname + " não está autorizado no Console do Firebase (Authentication > Settings > Authorized Domains).");
-      } else if (error.code === 'auth/popup-blocked') {
-        errorMsg = "POPUP BLOQUEADO PELO NAVEGADOR!";
-      } else if (error.code === 'auth/popup-closed-by-user') {
-        errorMsg = "LOGIN CANCELADO PELO USUÁRIO";
-      }
-      
-      triggerToast(errorMsg);
-    }
-  };
 
   useEffect(() => {
     const checkApiKey = async () => {
@@ -421,33 +285,7 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('isBotOpen', isBotOpen.toString());
     localStorage.setItem('botClosedMessage', botClosedMessage);
-    localStorage.setItem('adminPassword', adminPassword);
-    localStorage.setItem('userKeys', JSON.stringify(userKeys));
-  }, [isBotOpen, botClosedMessage, adminPassword, userKeys]);
-
-  // Check if current user is banned or expired
-  useEffect(() => {
-    if (isLoggedIn && currentUserKey) {
-      const userKey = userKeys.find(u => u.key === currentUserKey);
-      const isExpired = userKey?.expiresAt && Date.now() > userKey.expiresAt;
-      
-      if (!userKey || userKey.isBanned || !isBotOpen || isExpired) {
-        setIsLoggedIn(false);
-        setActiveScreen(AppScreen.LOGIN);
-        
-        if (userKey?.isBanned) {
-          triggerToast("ACESSO BANIDO!");
-        } else if (isExpired) {
-          triggerToast("ACESSO EXPIRADO!");
-          // Auto-ban in DB when expired to prevent reuse
-          updateDoc(doc(db, 'userKeys', currentUserKey), { isBanned: true })
-            .catch(err => handleFirestoreError(err, OperationType.UPDATE, `userKeys/${currentUserKey}`));
-        } else if (!isBotOpen) {
-          triggerToast("BOT FECHADO PELO ADMIN!");
-        }
-      }
-    }
-  }, [userKeys, isBotOpen, isLoggedIn, currentUserKey, currentTime]);
+  }, [isBotOpen, botClosedMessage]);
 
   const handleBuyAccess = () => {
     if (!selectedPlan) return;
@@ -464,94 +302,7 @@ const App: React.FC = () => {
     setIsPricingModalOpen(false);
     setSelectedPlan(null);
     setPaymentStatus('idle');
-    setPaymentPhone('');
   };
-
-  const trackUserAction = useCallback(async (action: string, screen?: AppScreen) => {
-    if (!isLoggedIn || !currentUserKey || isAdminLoggedIn) return;
-    
-    try {
-      const updateData: any = {
-        lastAction: action,
-        lastActionAt: Date.now()
-      };
-      if (screen) updateData.currentScreen = screen;
-      
-      await updateDoc(doc(db, 'userKeys', currentUserKey), updateData);
-    } catch (err) {
-      console.error("Error tracking user action:", err);
-    }
-  }, [isLoggedIn, currentUserKey, isAdminLoggedIn]);
-
-  // Track screen changes
-  useEffect(() => {
-    if (isLoggedIn && activeScreen !== AppScreen.LOGIN && activeScreen !== AppScreen.ADMIN_PANEL) {
-      trackUserAction(`Navegou para ${activeScreen}`, activeScreen);
-    }
-  }, [activeScreen, isLoggedIn, trackUserAction]);
-
-  // Check for Admin Message
-  useEffect(() => {
-    if (isLoggedIn && currentUserKey) {
-      const currentUser = userKeys.find(u => u.key === currentUserKey);
-      if (currentUser?.adminMessage) {
-        // We show the message and then clear it so it doesn't keep popping up
-        // Or we could keep it as a notification. Let's show it as a toast for now.
-        triggerToast(`MENSAGEM DO ADMIN: ${currentUser.adminMessage}`);
-        // Clear message after showing
-        updateDoc(doc(db, 'userKeys', currentUserKey), { adminMessage: '' })
-          .catch(err => console.error("Error clearing admin message:", err));
-      }
-    }
-  }, [userKeys, isLoggedIn, currentUserKey]);
-
-  const isScreenBlocked = useCallback((screen: AppScreen) => {
-    if (!isLoggedIn || !currentUserKey || isAdminLoggedIn) return false;
-    const currentUser = userKeys.find(u => u.key === currentUserKey);
-    return currentUser?.blockedScreens?.includes(screen) || false;
-  }, [isLoggedIn, currentUserKey, isAdminLoggedIn, userKeys]);
-
-  const toggleScreenBlock = async (key: string, screen: string) => {
-    const userKey = userKeys.find(u => u.key === key);
-    if (!userKey) return;
-    
-    const blockedScreens = userKey.blockedScreens || [];
-    const newBlockedScreens = blockedScreens.includes(screen)
-      ? blockedScreens.filter(s => s !== screen)
-      : [...blockedScreens, screen];
-      
-    try {
-      await updateDoc(doc(db, 'userKeys', key), { blockedScreens: newBlockedScreens });
-      triggerToast(blockedScreens.includes(screen) ? "TELA DESBLOQUEADA!" : "TELA BLOQUEADA!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `userKeys/${key}`);
-    }
-  };
-
-  const sendAdminMessage = async (key: string, message: string) => {
-    if (!message.trim()) return;
-    try {
-      await updateDoc(doc(db, 'userKeys', key), { adminMessage: message });
-      triggerToast("MENSAGEM ENVIADA!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `userKeys/${key}`);
-    }
-  };
-
-  // Heartbeat to keep user "online"
-  useEffect(() => {
-    if (isLoggedIn && currentUserKey && !isAdminLoggedIn) {
-      const interval = setInterval(() => {
-        trackUserAction('Ativo no Sistema');
-      }, 60000); // Every minute
-      return () => clearInterval(interval);
-    }
-  }, [isLoggedIn, currentUserKey, isAdminLoggedIn, trackUserAction]);
-
-  const onlineUsersCount = useMemo(() => {
-    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-    return userKeys.filter(u => u.lastActionAt && u.lastActionAt > fiveMinutesAgo).length;
-  }, [userKeys]);
 
   const PRICING_PLANS = [
     { name: '2 DIAS', price: '250 MZN' },
@@ -562,7 +313,10 @@ const App: React.FC = () => {
   ];
 
   const shareSystemLink = () => {
-    const shareUrl = window.location.origin;
+    const shareUrl = window.location.origin; // Base URL of the bot
+    setGeneratedInviteLink(shareUrl);
+    setIsInviteModalOpen(true);
+    
     const text = `💎 *VENOM ELITE - BOT DE SINAIS PRO* 💎\n\n🚀 Acesse o sistema de sinais mais assertivo de Moçambique!\n\n🔗 *LINK:* ${shareUrl}\n\n✅ *Extração de Lucro Garantida*`;
     
     if (navigator.share) {
@@ -570,243 +324,9 @@ const App: React.FC = () => {
         title: 'Venom Elite - Bot de Sinais',
         text: text,
         url: shareUrl
-      }).catch(() => triggerToast("ERRO AO COMPARTILHAR"));
-    } else {
-      navigator.clipboard.writeText(text);
-      triggerToast("LINK DE CONVITE COPIADO!");
+      }).catch(() => console.log("Native share cancelled"));
     }
   };
-
-  const handleLogin = () => {
-    if (!isBotOpen) {
-      triggerToast("BOT FECHADO!");
-      return;
-    }
-    const user = userKeys.find(u => u.key === loginInput);
-    if (user) {
-      const isExpired = user.expiresAt && Date.now() > user.expiresAt;
-      if (user.isBanned) {
-        triggerToast("ESTE ACESSO ESTÁ BANIDO!");
-      } else if (isExpired) {
-        triggerToast("ESTE ACESSO ESTÁ EXPIRADO!");
-        // Auto-ban in DB when expired
-        updateDoc(doc(db, 'userKeys', loginInput), { isBanned: true })
-          .catch(err => handleFirestoreError(err, OperationType.UPDATE, `userKeys/${loginInput}`));
-      } else {
-        setIsLoggedIn(true);
-        setCurrentUserKey(loginInput);
-        setActiveScreen(AppScreen.HOUSE_SELECTION);
-        triggerToast("ACESSO AUTORIZADO!");
-      }
-    } else {
-      triggerToast("CHAVE DE ACESSO INVÁLIDA!");
-    }
-  };
-
-  const blockUser = async (identifier: string, reason: string) => {
-    // NEVER block the main admin
-    if (user?.email === 'efronjoao9@gmail.com' || identifier === 'efronjoao9@gmail.com') {
-      console.log("Blocking skipped for admin user.");
-      return;
-    }
-
-    try {
-      await setDoc(doc(db, 'blocked_users', identifier), {
-        identifier,
-        reason,
-        blockedAt: Date.now(),
-        uid: user?.uid,
-        email: user?.email
-      });
-      setIsBlocked(true);
-      triggerToast("SISTEMA BLOQUEADO POR SEGURANÇA!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `blocked_users/${identifier}`);
-    }
-  };
-
-  const unblockUser = async (identifier: string) => {
-    try {
-      await deleteDoc(doc(db, 'blocked_users', identifier));
-      triggerToast("USUÁRIO DESBLOQUEADO!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `blocked_users/${identifier}`);
-    }
-  };
-
-  const handleAdminLogin = async () => {
-    if (!adminLoginInput) {
-      triggerToast("SENHA OBRIGATÓRIA!");
-      if (user) {
-        await blockUser(user.email || user.uid, "Tentativa de acesso ao painel sem senha");
-      }
-      return;
-    }
-
-    if (adminLoginInput === adminPassword) {
-      setIsAdminLoggedIn(true);
-      setActiveScreen(AppScreen.ADMIN_PANEL);
-      triggerToast("PAINEL ADMIN ACESSADO!");
-      setFailedAdminAttempts(0);
-    } else {
-      const newAttempts = failedAdminAttempts + 1;
-      setFailedAdminAttempts(newAttempts);
-      triggerToast(`SENHA ADMIN INCORRETA! (${newAttempts}/3)`);
-      
-      if (newAttempts >= 3) {
-        if (user) {
-          await blockUser(user.email || user.uid, "Múltiplas tentativas incorretas no painel admin");
-        }
-      }
-    }
-  };
-
-  const createNewKey = async () => {
-    if (!newKeyInput) return;
-    if (userKeys.some(u => u.key === newKeyInput)) {
-      triggerToast("CHAVE JÁ EXISTE!");
-      return;
-    }
-    
-    const days = parseInt(newKeyDays) || 0;
-    const hours = parseInt(newKeyHours) || 0;
-    const minutes = parseInt(newKeyMinutes) || 0;
-    
-    const totalMinutes = (days * 1440) + (hours * 60) + minutes;
-    const expiresAt = totalMinutes > 0 ? Date.now() + (totalMinutes * 60000) : undefined;
-    
-    try {
-      const keyData = { key: newKeyInput, isBanned: false, expiresAt: expiresAt || null };
-      await setDoc(doc(db, 'userKeys', newKeyInput), keyData);
-      
-      setNewKeyInput('');
-      setNewKeyDays('');
-      setNewKeyHours('');
-      setNewKeyMinutes('');
-      
-      if (expiresAt) {
-        triggerToast(`CHAVE TEMPORÁRIA CRIADA! (${days}d ${hours}h ${minutes}m)`);
-      } else {
-        triggerToast("CHAVE PERMANENTE CRIADA!");
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `userKeys/${newKeyInput}`);
-    }
-  };
-
-  const formatTimeRemaining = (expiresAt: number) => {
-    const diff = expiresAt - Date.now();
-    if (diff <= 0) return "Expirado";
-    
-    const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    
-    let parts = [];
-    if (d > 0) parts.push(`${d}d`);
-    if (h > 0) parts.push(`${h}h`);
-    if (m > 0 || parts.length === 0) parts.push(`${m}m`);
-    
-    return parts.join(' ');
-  };
-
-  const toggleBan = (key: string) => {
-    setKeyToToggle(key);
-    setIsBanConfirmOpen(true);
-  };
-
-  const confirmToggleBan = async () => {
-    if (!keyToToggle) return;
-    const userKey = userKeys.find(u => u.key === keyToToggle);
-    if (!userKey) return;
-    try {
-      await updateDoc(doc(db, 'userKeys', keyToToggle), { isBanned: !userKey.isBanned });
-      triggerToast(userKey.isBanned ? "USUÁRIO DESBANIDO!" : "USUÁRIO BANIDO!");
-      setIsBanConfirmOpen(false);
-      setKeyToToggle(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `userKeys/${keyToToggle}`);
-    }
-  };
-
-  const deleteKey = (key: string) => {
-    setKeyToDelete(key);
-    setIsDeleteConfirmOpen(true);
-  };
-
-  const confirmDeleteKey = async () => {
-    if (!keyToDelete) return;
-    try {
-      await deleteDoc(doc(db, 'userKeys', keyToDelete));
-      triggerToast("CHAVE REMOVIDA!");
-      setIsDeleteConfirmOpen(false);
-      setKeyToDelete(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `userKeys/${keyToDelete}`);
-    }
-  };
-
-  const updateAdminPassword = async () => {
-    if (!newAdminPassInput) return;
-    try {
-      await updateDoc(doc(db, 'appSettings', 'global'), { adminPassword: newAdminPassInput });
-      setNewAdminPassInput('');
-      triggerToast("SENHA ADMIN ALTERADA!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'appSettings/global');
-    }
-  };
-
-  const updateBotStatus = async (open: boolean) => {
-    try {
-      await updateDoc(doc(db, 'appSettings', 'global'), { isBotOpen: open });
-      triggerToast(open ? "BOT ABERTO!" : "BOT FECHADO!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'appSettings/global');
-    }
-  };
-
-  const updateBotMessage = async () => {
-    if (!newBotMessageInput) return;
-    try {
-      await updateDoc(doc(db, 'appSettings', 'global'), { botClosedMessage: newBotMessageInput });
-      setNewBotMessageInput('');
-      triggerToast("MENSAGEM ATUALIZADA!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'appSettings/global');
-    }
-  };
-
-  const logout = () => {
-    setIsLoggedIn(false);
-    setCurrentUserKey('');
-    setActiveScreen(AppScreen.LOGIN);
-  };
-
-  const adminLogout = () => {
-    setIsAdminLoggedIn(false);
-    setActiveScreen(AppScreen.LOGIN);
-    setAdminLoginInput('');
-  };
-
-  // Check for expired keys (Admin only to avoid conflicts)
-  useEffect(() => {
-    if (!isAdminLoggedIn) return;
-    
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      for (const u of userKeys) {
-        if (u.expiresAt && u.expiresAt < now && !u.isBanned) {
-          try {
-            await updateDoc(doc(db, 'userKeys', u.key), { isBanned: true });
-          } catch (err) {
-            console.error("Error auto-banning expired key:", u.key, err);
-          }
-        }
-      }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [userKeys, isAdminLoggedIn]);
 
   const triggerToast = (message: string) => {
     setToast({ show: true, message: message });
@@ -1195,52 +715,6 @@ const App: React.FC = () => {
 
   const onLogoClick = () => setActiveScreen(AppScreen.SETTINGS);
 
-  if (!isAuthReady) {
-    return (
-      <div className="min-h-screen bg-[#05070a] flex items-center justify-center">
-        <div className="animate-pulse text-accent font-black tracking-widest uppercase text-[10px]">Iniciando Protocolo...</div>
-      </div>
-    );
-  }
-
-  if (isBlocked) {
-    return (
-      <div className="min-h-screen bg-[#05070a] flex flex-col items-center justify-center p-8 text-center space-y-8">
-        <div className="w-24 h-24 bg-rose-500/10 rounded-full flex items-center justify-center border border-rose-500/20 animate-pulse">
-          <svg className="w-12 h-12 text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m11-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        </div>
-        <div className="space-y-4">
-          <h1 className="text-3xl font-black text-rose-500 uppercase tracking-tighter">SISTEMA BLOQUEADO</h1>
-          <p className="text-xs text-secondary font-bold uppercase leading-relaxed max-w-xs mx-auto">
-            Detectamos atividades suspeitas ou tentativas de acesso não autorizadas ao núcleo do sistema. 
-            Este e-mail ({user?.email}) foi permanentemente banido da rede Venom Elite.
-          </p>
-        </div>
-        <div className="p-4 glass-card rounded-2xl border border-rose-500/20 w-full max-w-xs">
-          <p className="text-[10px] text-rose-400 font-mono uppercase tracking-widest">Código de Erro: SEC_BRUTE_FORCE_DETECTED</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#05070a] flex flex-col items-center justify-center p-8 space-y-8">
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-black text-primary">VENOM <span className="text-accent italic">ELITE</span></h1>
-          <p className="text-[10px] text-secondary font-black uppercase tracking-widest">Autenticação Necessária</p>
-        </div>
-        <button 
-          onClick={handleGoogleSignIn}
-          className="w-full max-w-xs py-5 bg-white text-black rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 shadow-xl active:scale-95 transition-all"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Entrar com Google
-        </button>
-      </div>
-    );
-  }
-
   return (
     <ErrorBoundary>
       <Layout 
@@ -1303,23 +777,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {isLoggedIn && !isAdminLoggedIn && isScreenBlocked(activeScreen) && (
-        <div className="fixed inset-0 z-[2000] bg-[#05070a]/95 backdrop-blur-xl flex flex-col items-center justify-center p-12 text-center space-y-8 animate-in fade-in">
-          <div className="w-24 h-24 bg-rose-500/20 rounded-[2rem] flex items-center justify-center text-rose-500 border border-rose-500/30 shadow-[0_0_50px_rgba(244,63,94,0.2)]">
-            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 15v2m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
-          </div>
-          <div className="space-y-3">
-            <h2 className="text-2xl font-black text-primary uppercase italic">Acesso <span className="text-rose-500">Restrito</span></h2>
-            <p className="text-[10px] text-secondary font-black uppercase tracking-[0.3em] leading-relaxed">Esta funcionalidade foi bloqueada para o seu acesso pelo administrador.</p>
-          </div>
-          <button 
-            onClick={() => setActiveScreen(AppScreen.HOUSE_SELECTION)}
-            className="px-10 py-4 bg-white text-black rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all"
-          >
-            Voltar ao Início
-          </button>
-        </div>
-      )}
 
       {activeScreen === AppScreen.SETTINGS && (
         <div className="px-5 space-y-6 pb-20 animate-in slide-in-from-top-4">
@@ -1412,9 +869,6 @@ const App: React.FC = () => {
 
             <button onClick={() => { triggerToast("Acessando..."); setActiveScreen(AppScreen.HOUSE_SELECTION); }} 
               className="w-full py-4 bg-accent text-black rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-lg active:scale-95 transition-all">Sincronizar Protocolo</button>
-
-            <button onClick={logout} 
-              className="w-full py-4 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all">Encerrar Sessão (Logout)</button>
           </div>
         </div>
       )}
@@ -1931,56 +1385,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {activeScreen === AppScreen.LOGIN && (
-        <div className="min-h-[80vh] flex flex-col items-center justify-center px-8 space-y-10 animate-in fade-in zoom-in-95">
-          <div className="text-center space-y-4">
-            <div className="space-y-1">
-              <h1 className="text-3xl font-black text-primary tracking-tighter">VENOM <span className="text-accent italic">ELITE</span></h1>
-              <p className="text-[10px] text-secondary font-black uppercase tracking-[0.4em]">Protocolo de Acesso</p>
-            </div>
-          </div>
-
-          {!isBotOpen ? (
-            <div className="glass-card p-8 rounded-[2.5rem] border border-rose-500/30 bg-rose-500/5 text-center space-y-4 w-full">
-              <div className="w-12 h-12 bg-rose-500/20 rounded-2xl flex items-center justify-center mx-auto text-rose-500">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-              </div>
-              <h3 className="text-sm font-black text-rose-500 uppercase tracking-widest">BOT FECHADO</h3>
-              <p className="text-xs font-bold text-secondary leading-relaxed uppercase">{botClosedMessage}</p>
-              <button onClick={() => setActiveScreen(AppScreen.ADMIN_PANEL)} className="text-[8px] font-black text-secondary/40 hover:text-accent uppercase tracking-widest pt-4">Painel Admin</button>
-            </div>
-          ) : (
-            <div className="w-full space-y-6">
-              <div className="space-y-2">
-                <label className="text-[9px] font-black text-secondary uppercase tracking-widest ml-2">Chave de Acesso</label>
-                <input 
-                  type="password" 
-                  value={loginInput}
-                  onChange={e => setLoginInput(e.target.value)}
-                  placeholder="DIGITE SUA CHAVE..."
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl py-5 px-6 text-sm font-black text-primary outline-none focus:border-accent/30 transition-all text-center tracking-[0.5em]"
-                />
-              </div>
-              <button 
-                onClick={handleLogin}
-                className="w-full py-5 bg-accent text-black rounded-2xl font-black text-xs uppercase tracking-[0.3em] shadow-[0_10px_30px_rgba(0,255,157,0.2)] active:scale-95 transition-all"
-              >
-                Entrar no Sistema
-              </button>
-              <button 
-                onClick={() => setIsPricingModalOpen(true)}
-                className="w-full py-4 bg-white/5 border border-white/10 text-primary rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"
-              >
-                Comprar Acesso
-              </button>
-              <div className="flex justify-center">
-                <button onClick={() => setActiveScreen(AppScreen.ADMIN_PANEL)} className="text-[8px] font-black text-secondary/40 hover:text-accent uppercase tracking-widest">Painel Admin</button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Pricing Modal */}
       {isPricingModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl animate-in fade-in zoom-in-95">
@@ -2086,355 +1490,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Ban Confirmation Modal */}
-      {isBanConfirmOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl animate-in fade-in zoom-in-95">
-          <div className="glass-card w-full max-w-xs rounded-[2rem] border border-white/10 p-8 space-y-6 text-center relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-red-500/20 overflow-hidden">
-              <div className="h-full bg-red-500 animate-pulse w-full"></div>
-            </div>
-            
-            <div className="w-16 h-16 bg-red-500/10 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-lg font-black text-primary uppercase italic">Confirmar <span className="text-red-500">Ação</span></h3>
-              <p className="text-[10px] text-secondary font-bold uppercase tracking-widest leading-relaxed">
-                Você tem certeza que deseja {userKeys.find(u => u.key === keyToToggle)?.isBanned ? 'DESBANIR' : 'BANIR'} este usuário?
-              </p>
-              <div className="bg-white/5 p-2 rounded-lg mt-2">
-                <code className="text-accent font-mono text-xs">{keyToToggle}</code>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-4">
-              <button 
-                onClick={() => { setIsBanConfirmOpen(false); setKeyToToggle(null); }}
-                className="py-4 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black text-secondary uppercase tracking-widest hover:bg-white/10 transition-all"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmToggleBan}
-                className="py-4 rounded-2xl bg-red-500/20 border border-red-500/50 text-[10px] font-black text-red-500 uppercase tracking-widest hover:bg-red-500/30 transition-all shadow-[0_0_20px_rgba(239,68,68,0.2)]"
-              >
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {isDeleteConfirmOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl animate-in fade-in zoom-in-95">
-          <div className="glass-card w-full max-w-xs rounded-[2rem] border border-white/10 p-8 space-y-6 text-center relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-red-600/20 overflow-hidden">
-              <div className="h-full bg-red-600 animate-pulse w-full"></div>
-            </div>
-            
-            <div className="w-16 h-16 bg-red-600/10 border border-red-600/30 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-lg font-black text-primary uppercase italic">Excluir <span className="text-red-600">Chave</span></h3>
-              <p className="text-[10px] text-secondary font-bold uppercase tracking-widest leading-relaxed">
-                Esta ação é irreversível. Deseja realmente EXCLUIR esta chave de acesso?
-              </p>
-              <div className="bg-white/5 p-2 rounded-lg mt-2">
-                <code className="text-accent font-mono text-xs">{keyToDelete}</code>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 pt-4">
-              <button 
-                onClick={() => { setIsDeleteConfirmOpen(false); setKeyToDelete(null); }}
-                className="py-4 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black text-secondary uppercase tracking-widest hover:bg-white/10 transition-all"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={confirmDeleteKey}
-                className="py-4 rounded-2xl bg-red-600/20 border border-red-600/50 text-[10px] font-black text-red-600 uppercase tracking-widest hover:bg-red-600/30 transition-all shadow-[0_0_20px_rgba(220,38,38,0.2)]"
-              >
-                Excluir
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeScreen === AppScreen.ADMIN_PANEL && (
-        <div className="px-6 py-8 space-y-8 pb-32 animate-in slide-in-from-bottom-10">
-          <div className="flex items-center justify-between">
-            <button onClick={() => { setIsAdminLoggedIn(false); setActiveScreen(AppScreen.LOGIN); }} className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-secondary border border-white/5">✕</button>
-            <h2 className="text-xl font-black text-primary italic">Admin <span className="text-accent">Panel</span></h2>
-            <div className="w-10 h-10"></div>
-          </div>
-
-          {!isAdminLoggedIn ? (
-            <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 space-y-6">
-              <div className="text-center space-y-2">
-                <span className="text-[9px] font-black text-accent uppercase tracking-widest">Segurança Máxima</span>
-                <h3 className="text-lg font-black text-primary">Acesso Restrito</h3>
-              </div>
-              <div className="space-y-2">
-                <input 
-                  type="password" 
-                  value={adminLoginInput}
-                  onChange={e => setAdminLoginInput(e.target.value)}
-                  placeholder="SENHA DO PAINEL..."
-                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-4 px-4 text-xs font-black text-primary outline-none text-center tracking-[0.3em]"
-                />
-              </div>
-              <button 
-                onClick={handleAdminLogin}
-                className="w-full py-4 bg-white text-black rounded-2xl font-black text-[10px] uppercase tracking-widest"
-              >
-                Desbloquear Painel
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Bot Status Control */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="glass-card p-6 rounded-3xl border border-white/5 flex flex-col items-center justify-center space-y-2">
-                  <span className="text-[8px] font-black text-secondary uppercase tracking-widest">Usuários Online</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                    <span className="text-3xl font-black text-primary tabular-nums">{onlineUsersCount}</span>
-                  </div>
-                </div>
-                <div className="glass-card p-6 rounded-3xl border border-white/5 flex flex-col items-center justify-center space-y-2">
-                  <span className="text-[8px] font-black text-secondary uppercase tracking-widest">Total de Chaves</span>
-                  <span className="text-3xl font-black text-primary tabular-nums">{userKeys.length}</span>
-                </div>
-              </div>
-
-              <div className="glass-card p-6 rounded-3xl border border-white/5 space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-black text-primary uppercase">Status do Bot</span>
-                  <button 
-                    onClick={() => updateBotStatus(!isBotOpen)}
-                    className={`px-4 py-2 rounded-xl font-black text-[8px] uppercase tracking-widest transition-all ${isBotOpen ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}
-                  >
-                    {isBotOpen ? 'ABERTO' : 'FECHADO'}
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[8px] font-bold text-secondary uppercase">Mensagem de Manutenção</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={newBotMessageInput}
-                      onChange={e => setNewBotMessageInput(e.target.value)}
-                      placeholder="NOVA MENSAGEM..."
-                      className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-primary outline-none"
-                    />
-                    <button onClick={updateBotMessage} className="px-4 bg-white/5 border border-white/10 text-primary rounded-xl text-[8px] font-black uppercase">OK</button>
-                  </div>
-                </div>
-              </div>
-
-              {/* User Management */}
-              <div className="glass-card p-6 rounded-3xl border border-white/5 space-y-6">
-                <div className="space-y-4">
-                  <h3 className="text-[10px] font-black text-accent uppercase tracking-widest">Gerenciar Acessos</h3>
-                  <div className="space-y-3">
-                    <input 
-                      type="text" 
-                      value={newKeyInput}
-                      onChange={e => setNewKeyInput(e.target.value)}
-                      placeholder="NOME DA CHAVE..."
-                      className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-[10px] text-primary outline-none"
-                    />
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <label className="text-[7px] text-secondary uppercase font-bold ml-1">Dias</label>
-                        <input 
-                          type="number" 
-                          value={newKeyDays}
-                          onChange={e => setNewKeyDays(e.target.value)}
-                          placeholder="0"
-                          className="w-full bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-primary outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[7px] text-secondary uppercase font-bold ml-1">Horas</label>
-                        <input 
-                          type="number" 
-                          value={newKeyHours}
-                          onChange={e => setNewKeyHours(e.target.value)}
-                          placeholder="0"
-                          className="w-full bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-primary outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[7px] text-secondary uppercase font-bold ml-1">Minutos</label>
-                        <input 
-                          type="number" 
-                          value={newKeyMinutes}
-                          onChange={e => setNewKeyMinutes(e.target.value)}
-                          placeholder="0"
-                          className="w-full bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[10px] text-primary outline-none"
-                        />
-                      </div>
-                    </div>
-                    <button onClick={createNewKey} className="w-full py-3 bg-accent text-black rounded-xl text-[9px] font-black uppercase shadow-lg active:scale-95 transition-all">Criar Acesso</button>
-                    <p className="text-[7px] text-secondary/60 uppercase italic text-center">* Deixe campos vazios para acesso permanente</p>
-                  </div>
-                </div>
-
-                {/* Blocked Users Section */}
-                {blockedUsers.length > 0 && (
-                  <div className="space-y-4 pt-4 border-t border-white/5">
-                    <h3 className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-                      Usuários Bloqueados ({blockedUsers.length})
-                    </h3>
-                    <div className="space-y-3">
-                      {blockedUsers.map(bUser => (
-                        <div key={bUser.email} className="glass-card p-4 rounded-2xl border border-rose-500/20 flex items-center justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[9px] font-black text-primary truncate">{bUser.email}</p>
-                            <p className="text-[7px] text-rose-400 uppercase font-bold truncate">{bUser.reason}</p>
-                          </div>
-                          <button 
-                            onClick={() => unblockUser(bUser.email)}
-                            className="px-3 py-1.5 bg-rose-500/10 border border-rose-500/30 text-rose-500 rounded-lg text-[8px] font-black uppercase hover:bg-rose-500/20 transition-all"
-                          >
-                            Desbloquear
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1 custom-scrollbar">
-                  {userKeys.map(user => (
-                    <div key={user.key} className="glass-card p-5 rounded-[2rem] border border-white/5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <p className="text-[11px] font-black text-primary tracking-tight">{user.key}</p>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${user.isBanned ? 'bg-rose-500/20 text-rose-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
-                              {user.isBanned ? 'BANIDO' : 'ATIVO'}
-                            </span>
-                            {user.expiresAt && !user.isBanned && (
-                              <span className="text-[7px] font-mono text-accent">
-                                {formatTimeRemaining(user.expiresAt)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => toggleBan(user.key)}
-                            className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all ${user.isBanned ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' : 'bg-rose-500/10 border-rose-500/30 text-rose-500'}`}
-                          >
-                            {user.isBanned ? '✓' : '∅'}
-                          </button>
-                          <button 
-                            onClick={() => deleteKey(user.key)}
-                            className="w-8 h-8 rounded-xl flex items-center justify-center bg-white/5 border border-white/10 text-secondary hover:bg-rose-500/20 hover:text-rose-500 transition-all"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Activity Info */}
-                      <div className="grid grid-cols-2 gap-2 bg-black/20 p-3 rounded-2xl border border-white/5">
-                        <div className="space-y-1">
-                          <span className="text-[6px] text-secondary font-black uppercase tracking-widest">Última Ação</span>
-                          <p className="text-[8px] text-primary font-bold truncate">{user.lastAction || 'Nenhuma'}</p>
-                        </div>
-                        <div className="space-y-1">
-                          <span className="text-[6px] text-secondary font-black uppercase tracking-widest">Tela Atual</span>
-                          <p className="text-[8px] text-accent font-bold truncate">{user.currentScreen || 'Nenhuma'}</p>
-                        </div>
-                        <div className="col-span-2 space-y-1 pt-1 border-t border-white/5">
-                          <span className="text-[6px] text-secondary font-black uppercase tracking-widest">Visto em</span>
-                          <p className="text-[8px] text-secondary/60 font-mono">
-                            {user.lastActionAt ? new Date(user.lastActionAt).toLocaleString() : 'Nunca'}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Screen Blocking */}
-                      <div className="space-y-2">
-                        <span className="text-[7px] text-secondary font-black uppercase tracking-widest ml-1">Bloquear Telas</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {[AppScreen.HOUSE_SELECTION, AppScreen.VIRTUAL_BOT, AppScreen.AGENDA, AppScreen.SIGNAL_ROOM, AppScreen.SUPPORT].map(screen => (
-                            <button
-                              key={screen}
-                              onClick={() => toggleScreenBlock(user.key, screen)}
-                              className={`px-2 py-1 rounded-lg text-[6px] font-black uppercase tracking-widest border transition-all ${
-                                user.blockedScreens?.includes(screen)
-                                  ? 'bg-rose-500 text-white border-rose-500'
-                                  : 'bg-white/5 text-secondary border-white/10 hover:border-accent/50'
-                              }`}
-                            >
-                              {screen.replace('_', ' ')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Direct Message */}
-                      <div className="space-y-2 pt-2 border-t border-white/5">
-                        <span className="text-[7px] text-secondary font-black uppercase tracking-widest ml-1">Mandar Mensagem</span>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            value={adminMessageInput[user.key] || ''}
-                            onChange={e => setAdminMessageInput(prev => ({ ...prev, [user.key]: e.target.value }))}
-                            placeholder="MENSAGEM..."
-                            className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-[9px] text-primary outline-none focus:border-accent/50"
-                          />
-                          <button 
-                            onClick={() => {
-                              sendAdminMessage(user.key, adminMessageInput[user.key] || '');
-                              setAdminMessageInput(prev => ({ ...prev, [user.key]: '' }));
-                            }}
-                            className="px-4 bg-accent text-black rounded-xl text-[8px] font-black uppercase"
-                          >
-                            OK
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Admin Password Change */}
-              <div className="glass-card p-6 rounded-3xl border border-white/5 space-y-4">
-                <h3 className="text-[10px] font-black text-accent uppercase tracking-widest">Mudar Senha Painel</h3>
-                <div className="flex gap-2">
-                  <input 
-                    type="password" 
-                    value={newAdminPassInput}
-                    onChange={e => setNewAdminPassInput(e.target.value)}
-                    placeholder="NOVA SENHA ADMIN..."
-                    className="flex-1 bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-[10px] text-primary outline-none"
-                  />
-                  <button onClick={updateAdminPassword} className="px-6 bg-white text-black rounded-xl text-[9px] font-black uppercase">Mudar</button>
-                </div>
-              </div>
-
-              <button onClick={adminLogout} className="w-full py-4 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-2xl font-black text-[10px] uppercase tracking-widest">Sair do Painel</button>
-            </div>
-          )}
-        </div>
-      )}
     </Layout>
     </ErrorBoundary>
   );

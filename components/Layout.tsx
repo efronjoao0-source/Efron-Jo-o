@@ -61,15 +61,13 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
     <div className="min-h-screen flex flex-col max-w-[430px] mx-auto bg-transparent text-primary relative shadow-[0_0_100px_rgba(0,0,0,0.4)] border-x border-white/[0.02]">
       <header className="px-6 py-5 border-b border-white/[0.03] bg-[#05070a]/80 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center">
         <div className="flex items-center gap-3">
-          {activeScreen !== AppScreen.LOGIN && (
-            <div 
-              onClick={onLogoClick}
-              style={{ backgroundColor: themeConfig.accentColor }}
-              className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-black text-[10px] shadow-lg cursor-pointer active:scale-90 transition-all border border-white/20"
-            >
-              V55
-            </div>
-          )}
+          <div 
+            onClick={onLogoClick}
+            style={{ backgroundColor: themeConfig.accentColor }}
+            className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-black text-[10px] shadow-lg cursor-pointer active:scale-90 transition-all border border-white/20"
+          >
+            V55
+          </div>
           <div>
             <h1 className="font-black text-xs leading-tight tracking-tighter text-primary">Venom <span className="text-accent">Elite</span></h1>
             <p className="text-[8px] font-bold text-secondary uppercase tracking-[0.2em]">Hacker System</p>
@@ -77,9 +75,11 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
         </div>
 
         {title && (
-          <div className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
-            <span className="text-[9px] font-black text-accent uppercase tracking-widest">{title}</span>
+          <div className="flex items-center gap-2">
+            <div className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
+              <span className="text-[9px] font-black text-accent uppercase tracking-widest">{title}</span>
+            </div>
           </div>
         )}
       </header>
@@ -88,30 +88,28 @@ export default function Layout({ children, activeScreen, setScreen, title, theme
         {children}
       </main>
 
-      {(activeScreen !== AppScreen.LOGIN && activeScreen !== AppScreen.ADMIN_PANEL) && (
-        <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[94%] max-w-[410px] nav-dock rounded-[2rem] p-2 flex justify-between items-center z-50">
-          {navItems.map((item) => {
-            const isActive = activeScreen === item.screen;
-            return (
-              <button 
-                key={item.screen}
-                onClick={() => setScreen(item.screen)}
-                className={`flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-2xl transition-all duration-300 active:scale-90 flex-1 ${isActive ? 'text-accent' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                <div className={`transition-transform duration-300 ${isActive ? 'scale-110' : 'scale-100'}`}>
-                  {item.icon}
-                </div>
-                <span className={`text-[8px] font-bold uppercase tracking-tighter transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-60'}`}>
-                  {item.label}
-                </span>
-                {isActive && (
-                  <div className="absolute -top-1 w-1 h-1 rounded-full bg-accent shadow-[0_0_8px_var(--accent-color)]"></div>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      )}
+      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[94%] max-w-[410px] nav-dock rounded-[2rem] p-2 flex justify-between items-center z-50">
+        {navItems.map((item) => {
+          const isActive = activeScreen === item.screen;
+          return (
+            <button 
+              key={item.screen}
+              onClick={() => setScreen(item.screen)}
+              className={`flex flex-col items-center justify-center gap-1 py-2 px-3 rounded-2xl transition-all duration-300 active:scale-90 flex-1 ${isActive ? 'text-accent' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <div className={`transition-transform duration-300 ${isActive ? 'scale-110' : 'scale-100'}`}>
+                {item.icon}
+              </div>
+              <span className={`text-[8px] font-bold uppercase tracking-tighter transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-60'}`}>
+                {item.label}
+              </span>
+              {isActive && (
+                <div className="absolute -top-1 w-1 h-1 rounded-full bg-accent shadow-[0_0_8px_var(--accent-color)]"></div>
+              )}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }

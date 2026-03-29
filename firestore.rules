@@ -19,6 +19,7 @@ service cloud.firestore {
     //   - isBotOpen: boolean (required)
     //   - botClosedMessage: string (required)
     //   - adminPassword: string (required)
+    //   - adminWhatsApp: string (required)
     //
     // Collection: blocked_users
     // Document ID: email (the user's email)
@@ -27,6 +28,12 @@ service cloud.firestore {
     //   - reason: string (required)
     //   - blockedAt: number (required)
     //   - uid: string (optional)
+    //
+    // Collection: activated_emails
+    // Document ID: email (the user's email)
+    // Fields:
+    //   - activatedAt: number (required)
+    //   - activatedBy: string (optional)
     //
     // ===============================================================
 
@@ -77,11 +84,19 @@ service cloud.firestore {
     }
 
     function isValidAppSetting(data) {
-      return hasRequiredFields(['isBotOpen', 'botClosedMessage', 'adminPassword']) &&
-             hasOnlyAllowedFields(['isBotOpen', 'botClosedMessage', 'adminPassword']) &&
+      return hasRequiredFields(['isBotOpen', 'botClosedMessage', 'adminPassword', 'adminWhatsApp']) &&
+             hasOnlyAllowedFields(['isBotOpen', 'botClosedMessage', 'adminPassword', 'adminWhatsApp']) &&
              data.isBotOpen is bool &&
              data.botClosedMessage is string && data.botClosedMessage.size() <= 512 &&
-             data.adminPassword is string && data.adminPassword.size() >= 1 && data.adminPassword.size() <= 128;
+             data.adminPassword is string && data.adminPassword.size() >= 1 && data.adminPassword.size() <= 128 &&
+             data.adminWhatsApp is string && data.adminWhatsApp.size() >= 8 && data.adminWhatsApp.size() <= 20;
+    }
+
+    function isValidActivatedEmail(data) {
+      return hasRequiredFields(['activatedAt']) &&
+             hasOnlyAllowedFields(['activatedAt', 'activatedBy']) &&
+             data.activatedAt is number &&
+             (!('activatedBy' in data) || data.activatedBy is string);
     }
 
     function isValidBlockedUser(data) {
@@ -135,6 +150,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (request.auth.token.email == email || isAdmin());
       allow create: if isAuthenticated() && (request.auth.token.email == email || isAdmin()) && isValidBlockedUser(request.resource.data);
       allow update, delete: if isAdmin();
+    }
+
+    match /activated_emails/{email} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidActivatedEmail(request.resource.data);
+      allow delete: if isAdmin();
     }
   }
 }

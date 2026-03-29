@@ -83,6 +83,21 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  const safeStringify = (obj: any) => {
+    try {
+      if (typeof obj !== 'object' || obj === null) return String(obj);
+      const seen = new WeakSet();
+      return JSON.stringify(obj, (key, value) => {
+        if (typeof value === "object" && value !== null) {
+          if (seen.has(value)) return "[Circular]";
+          seen.add(value);
+        }
+        return value;
+      });
+    } catch (e) {
+      return "[Circular Structure]";
+    }
+  };
+  console.error('Firestore Error: ', safeStringify(errInfo));
+  throw new Error(safeStringify(errInfo));
 }

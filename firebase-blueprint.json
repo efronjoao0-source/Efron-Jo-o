@@ -23,9 +23,20 @@
       "properties": {
         "isBotOpen": { "type": "boolean", "description": "Whether the bot is open." },
         "botClosedMessage": { "type": "string", "description": "Message to show when the bot is closed." },
-        "adminPassword": { "type": "string", "description": "Password for the admin panel." }
+        "adminPassword": { "type": "string", "description": "Password for the admin panel." },
+        "adminWhatsApp": { "type": "string", "description": "Admin WhatsApp number for activation requests." }
       },
-      "required": ["isBotOpen", "botClosedMessage", "adminPassword"]
+      "required": ["isBotOpen", "botClosedMessage", "adminPassword", "adminWhatsApp"]
+    },
+    "ActivatedEmail": {
+      "title": "ActivatedEmail",
+      "description": "An email address that has been manually activated by an admin.",
+      "type": "object",
+      "properties": {
+        "activatedAt": { "type": "number", "description": "Timestamp of activation." },
+        "activatedBy": { "type": "string", "description": "Email of the admin who activated this account." }
+      },
+      "required": ["activatedAt"]
     }
   },
   "firestore": {
@@ -36,6 +47,10 @@
     "/appSettings/{settingId}": {
       "schema": "AppSetting",
       "description": "Collection of global application settings."
+    },
+    "/activated_emails/{email}": {
+      "schema": "ActivatedEmail",
+      "description": "Collection of manually activated email addresses."
     }
   }
 }

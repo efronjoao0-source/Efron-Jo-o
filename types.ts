@@ -73,9 +73,7 @@ export enum AppScreen {
   SIGNAL_ROOM = 'SIGNAL_ROOM',
   VIRTUAL_BOT = 'VIRTUAL_BOT',
   SUPPORT = 'SUPPORT',
-  SETTINGS = 'SETTINGS',
-  LOGIN = 'LOGIN',
-  ADMIN_PANEL = 'ADMIN_PANEL'
+  SETTINGS = 'SETTINGS'
 }
 
 export interface PlatformNotification {
